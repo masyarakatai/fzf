@@ -106,13 +106,13 @@ func BuildPattern(cache *ChunkCache, patternCache map[string]*Pattern, fuzzy boo
 		sortable = false
 	Loop:
 		for _, termSet := range termSets {
-			for idx, term := range termSet {
+			for _, term := range termSet {
 				if !term.inv {
 					sortable = true
 				}
 				// If the query contains inverse search terms or OR operators,
 				// we cannot cache the search scope
-				if !cacheable || idx > 0 || term.inv || fuzzy && term.typ != termFuzzy || !fuzzy && term.typ != termExact {
+				if !cacheable || len(termSets) > 1 || term.inv || fuzzy && term.typ != termFuzzy || !fuzzy && term.typ != termExact {
 					cacheable = false
 					if sortable {
 						// Can't break until we see at least one non-inverse term
@@ -170,7 +170,6 @@ func parseTerms(fuzzy bool, caseMode Case, normalize bool, str string) []termSet
 	tokens := _splitRegex.Split(str, -1)
 	sets := []termSet{}
 	set := termSet{}
-	switchSet := false
 	afterBar := false
 	for _, token := range tokens {
 		typ, inv, text := termFuzzy, false, strings.ReplaceAll(token, "\t", " ")
@@ -187,7 +186,8 @@ func parseTerms(fuzzy bool, caseMode Case, normalize bool, str string) []termSet
 		}
 
 		if len(set) > 0 && !afterBar && text == "|" {
-			switchSet = false
+			sets = append(sets, set)
+			set = termSet{}
 			afterBar = true
 			continue
 		}
@@ -225,10 +225,6 @@ func parseTerms(fuzzy bool, caseMode Case, normalize bool, str string) []termSet
 		}
 
 		if len(text) > 0 {
-			if switchSet {
-				sets = append(sets, set)
-				set = termSet{}
-			}
 			textRunes := []rune(text)
 			if normalizeTerm {
 				textRunes = algo.NormalizeRunes(textRunes)
@@ -239,7 +235,6 @@ func parseTerms(fuzzy bool, caseMode Case, normalize bool, str string) []termSet
 				text:          textRunes,
 				caseSensitive: caseSensitive,
 				normalize:     normalizeTerm})
-			switchSet = true
 		}
 	}
 	if len(set) > 0 {
@@ -270,8 +265,10 @@ func (p *Pattern) buildCacheKey() string {
 	}
 	cacheableTerms := []string{}
 	for _, termSet := range p.termSets {
-		if len(termSet) == 1 && !termSet[0].inv && (p.fuzzy || termSet[0].typ == termExact) {
-			cacheableTerms = append(cacheableTerms, string(termSet[0].text))
+		for _, term := range termSet {
+			if !term.inv && (p.fuzzy || term.typ == termExact) {
+				cacheableTerms = append(cacheableTerms, string(term.text))
+			}
 		}
 	}
 	return strings.Join(cacheableTerms, "\t")
@@ -387,7 +384,7 @@ func (p *Pattern) matchChunk(chunk *Chunk, cachedBitmap *ChunkBitmap, slab *util
 // A zero-value Result (with item == nil) indicates no match.
 func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, []Offset, *[]int) {
 	if p.extended {
-		if offsets, bonus, pos := p.extendedMatch(item, withPos, slab); len(offsets) == len(p.termSets) {
+		if offsets, bonus, pos := p.extendedMatch(item, withPos, slab); len(offsets) > 0 {
 			return buildResult(item, offsets, bonus), offsets, pos
 		}
 		return Result{}, nil, nil
@@ -427,37 +424,41 @@ func (p *Pattern) extendedMatch(item *Item, withPos bool, slab *util.Slab) ([]Of
 		allPos = &[]int{}
 	}
 	for _, termSet := range p.termSets {
-		var offset Offset
-		var currentScore int
-		matched := false
+		setOffsets := []Offset{}
+		setPos := []int{}
+		setScore := 0
+		matched := true
 		for _, term := range termSet {
 			pfun := p.procFun[term.typ]
 			off, score, pos := p.iter(pfun, input, term.caseSensitive, term.normalize, p.forward, term.text, withPos, slab)
 			if sidx := off[0]; sidx >= 0 {
 				if term.inv {
-					continue
+					matched = false
+					break
 				}
-				offset, currentScore = off, score
-				matched = true
+				setOffsets = append(setOffsets, off)
+				setScore += score
 				if withPos {
 					if pos != nil {
-						*allPos = append(*allPos, *pos...)
+						setPos = append(setPos, *pos...)
 					} else {
 						for idx := off[0]; idx < off[1]; idx++ {
-							*allPos = append(*allPos, int(idx))
+							setPos = append(setPos, int(idx))
 						}
 					}
 				}
-				break
 			} else if term.inv {
-				offset, currentScore = Offset{0, 0}, 0
-				matched = true
 				continue
+			} else {
+				matched = false
+				break
 			}
 		}
 		if matched {
-			offsets = append(offsets, offset)
-			totalScore += currentScore
+			if withPos {
+				*allPos = append(*allPos, setPos...)
+			}
+			return setOffsets, setScore, allPos
 		}
 	}
 	return offsets, totalScore, allPos

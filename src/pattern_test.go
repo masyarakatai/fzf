@@ -18,23 +18,13 @@ func init() {
 func TestParseTermsExtended(t *testing.T) {
 	terms := parseTerms(true, CaseSmart, false,
 		"aaa 'bbb ^ccc ddd$ !eee !'fff !^ggg !hhh$ | ^iii$ ^xxx | 'yyy | zzz$ | !ZZZ |")
-	if len(terms) != 9 ||
-		terms[0][0].typ != termFuzzy || terms[0][0].inv ||
-		terms[1][0].typ != termExact || terms[1][0].inv ||
-		terms[2][0].typ != termPrefix || terms[2][0].inv ||
-		terms[3][0].typ != termSuffix || terms[3][0].inv ||
-		terms[4][0].typ != termExact || !terms[4][0].inv ||
-		terms[5][0].typ != termFuzzy || !terms[5][0].inv ||
-		terms[6][0].typ != termPrefix || !terms[6][0].inv ||
-		terms[7][0].typ != termSuffix || !terms[7][0].inv ||
-		terms[7][1].typ != termEqual || terms[7][1].inv ||
-		terms[8][0].typ != termPrefix || terms[8][0].inv ||
-		terms[8][1].typ != termExact || terms[8][1].inv ||
-		terms[8][2].typ != termSuffix || terms[8][2].inv ||
-		terms[8][3].typ != termExact || !terms[8][3].inv {
+	if len(terms) != 5 || len(terms[0]) != 8 || len(terms[1]) != 2 || len(terms[2]) != 1 || len(terms[3]) != 1 || len(terms[4]) != 1 ||
+		terms[0][0].typ != termFuzzy || terms[0][4].typ != termExact || !terms[0][4].inv ||
+		terms[1][0].typ != termEqual || terms[1][1].typ != termPrefix ||
+		terms[3][0].typ != termSuffix || !terms[4][0].inv {
 		t.Errorf("%v", terms)
 	}
-	for _, termSet := range terms[:8] {
+	for _, termSet := range terms[0:1] {
 		term := termSet[0]
 		if len(term.text) != 3 {
 			t.Errorf("%v", term)
@@ -42,18 +32,37 @@ func TestParseTermsExtended(t *testing.T) {
 	}
 }
 
+func TestOrPrecedence(t *testing.T) {
+	pattern := buildPattern(false, algo.FuzzyMatchV2, true, CaseSmart, false, true, false, true, []Range{}, Delimiter{}, []rune("failed | lock file"))
+	for _, test := range []struct {
+		text string
+		want bool
+	}{
+		{"failed", true},
+		{"lock file", true},
+		{"lock", false},
+		{"file", false},
+	} {
+		item := &Item{text: util.ToChars([]byte(test.text))}
+		match, _, _ := pattern.MatchItem(item, false, slab)
+		if (match.item != nil) != test.want {
+			t.Errorf("query did not match %q as expected", test.text)
+		}
+	}
+}
+
 func TestParseTermsExtendedExact(t *testing.T) {
 	terms := parseTerms(false, CaseSmart, false,
 		"aaa 'bbb ^ccc ddd$ !eee !'fff !^ggg !hhh$")
-	if len(terms) != 8 ||
+	if len(terms) != 1 || len(terms[0]) != 8 ||
 		terms[0][0].typ != termExact || terms[0][0].inv || len(terms[0][0].text) != 3 ||
-		terms[1][0].typ != termFuzzy || terms[1][0].inv || len(terms[1][0].text) != 3 ||
-		terms[2][0].typ != termPrefix || terms[2][0].inv || len(terms[2][0].text) != 3 ||
-		terms[3][0].typ != termSuffix || terms[3][0].inv || len(terms[3][0].text) != 3 ||
-		terms[4][0].typ != termExact || !terms[4][0].inv || len(terms[4][0].text) != 3 ||
-		terms[5][0].typ != termFuzzy || !terms[5][0].inv || len(terms[5][0].text) != 3 ||
-		terms[6][0].typ != termPrefix || !terms[6][0].inv || len(terms[6][0].text) != 3 ||
-		terms[7][0].typ != termSuffix || !terms[7][0].inv || len(terms[7][0].text) != 3 {
+		terms[0][1].typ != termFuzzy || terms[0][1].inv || len(terms[0][1].text) != 3 ||
+		terms[0][2].typ != termPrefix || terms[0][2].inv || len(terms[0][2].text) != 3 ||
+		terms[0][3].typ != termSuffix || terms[0][3].inv || len(terms[0][3].text) != 3 ||
+		terms[0][4].typ != termExact || !terms[0][4].inv || len(terms[0][4].text) != 3 ||
+		terms[0][5].typ != termFuzzy || !terms[0][5].inv || len(terms[0][5].text) != 3 ||
+		terms[0][6].typ != termPrefix || !terms[0][6].inv || len(terms[0][6].text) != 3 ||
+		terms[0][7].typ != termSuffix || !terms[0][7].inv || len(terms[0][7].text) != 3 {
 		t.Errorf("%v", terms)
 	}
 }
@@ -173,11 +182,11 @@ func TestCacheKey(t *testing.T) {
 	test(true, "foo  bar  baz", "foo\tbar\tbaz", true)
 	test(true, "foo !bar", "foo", false)
 	test(true, "foo !bar   baz", "foo\tbaz", false)
-	test(true, "foo | bar baz", "baz", false)
-	test(true, "foo | bar | baz", "", false)
-	test(true, "foo | bar !baz", "", false)
-	test(true, "| | foo", "", false)
-	test(true, "| | | foo", "foo", false)
+	test(true, "foo | bar baz", "foo\tbar\tbaz", false)
+	test(true, "foo | bar | baz", "foo\tbar\tbaz", false)
+	test(true, "foo | bar !baz", "foo\tbar", false)
+	test(true, "| | foo", "|\tfoo", false)
+	test(true, "| | | foo", "|\t|\tfoo", false)
 }
 
 func TestCacheable(t *testing.T) {
